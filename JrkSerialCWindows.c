@@ -5,7 +5,9 @@
 
 
 #include <stdio.h>
+#include <math.h>
 #include <string.h>
+#include<stdlib.h>
 #include <windows.h>
 
 int Set_target(); 
@@ -102,7 +104,7 @@ int jrkGetVariable(HANDLE port, unsigned char command)
 	DWORD bytesTransferred;
 
 	// Send the command to the device.
-	success = WriteFile(port, &command, 1, &bytesTransferred, NULL);
+	success = WriteFile(port,  &command, 1, &bytesTransferred, NULL);
 	if (!success)
 	{
 		fprintf(stderr, "Error: Unable to write Get Position command to serial port.  Error code 0x%x.", GetLastError());
@@ -131,10 +133,57 @@ int jrkGetVariable(HANDLE port, unsigned char command)
 	return response[0] + 256*response[1];
 }
 
+//1 byte
+int jrkGetVariable_1(HANDLE port, unsigned char command)
+{
+	unsigned char response[1];
+	BOOL success;
+	DWORD bytesTransferred;
+
+	// Send the command to the device.
+	success = WriteFile(port,  &command, 1, &bytesTransferred, NULL);
+	if (!success)
+	{
+		fprintf(stderr, "Error: Unable to write Get Position command to serial port.  Error code 0x%x.", GetLastError());
+		return -1;
+	}
+	if (sizeof(command) != bytesTransferred)
+	{
+		fprintf(stderr, "Error: Expected to write %d bytes but only wrote %d.", sizeof(command), bytesTransferred);
+		return -1;
+	}
+
+	// Read the response from the device.
+	success = ReadFile(port, response, sizeof(response), &bytesTransferred, NULL);
+	if (!success)
+	{
+		fprintf(stderr, "Error: Unable to read Get Position response from serial port.  Error code 0x%x.", GetLastError());
+		return 0;
+	}
+	if (sizeof(response) != bytesTransferred)
+	{
+		fprintf(stderr, "Error: Expected to read %d bytes but only read %d (timeout). "
+			"Make sure the jrk's serial mode is USB Dual Port or USB Chained.", sizeof(command), bytesTransferred);
+		return 0;
+	}
+
+	return response[0];
+}
+
 // Gets the value of the jrk's Feedback variable (0-4095).
 int jrkGetFeedback(HANDLE port)
 {
-	return jrkGetVariable(port, 0xA5);
+	return jrkGetVariable(port, 0xA7);
+}
+
+int jrkGetInput(HANDLE port)
+{
+	return jrkGetVariable(port, 0xA1);
+}
+
+int jrkGetCurrent(HANDLE port)
+{
+	return jrkGetVariable_1(port, 0x8F);
 }
 
 // Gets the value of the jrk's Target variable (0-4095).
@@ -173,12 +222,18 @@ BOOL jrkSetTarget(HANDLE port, unsigned short target)
 /** This is the first function to run when the program starts. */
 int main(int argc, char * argv[])
 {
+	FILE *fp;
+	
+
+
 	HANDLE port;
 	char * portName;
 	int baudRate;
-	int feedback, target, newTarget;
-	int i,user_in =2 ;
+	int feedback, target, newTarget,Input,Current;
+	int user_in =2 ;
+	int i =0;
 
+	fp=fopen("results.txt","w");
 	while(1){
 	user_in=2;
 	printf("Do you wish to Run the motor?(1/0) \n"); 
@@ -189,13 +244,13 @@ int main(int argc, char * argv[])
 	
 		if(user_in == 1)
 		{
-
+		system("cls");
 										/* portName should be the name of the jrk's Command Port (e.g. "\\\\.\\COM4")
 	* as shown in your computer's Device Manager.
 	* Alternatively you can use \\.\USBSER000 to specify the first virtual COM
 	* port that uses the usbser.sys driver.  This will usually be the jrk's
 	* command port. */
-			portName = "\\\\.\\COM5";  // Each double slash in this source code represents one slash in the actual name.
+			portName = "\\\\.\\COM8";  // Each double slash in this source code represents one slash in the actual name.
 
 			/* Choose the baud rate (bits per second).
 				* If the jrk's serial mode is USB Dual Port, this number does not matter. */
@@ -206,20 +261,33 @@ int main(int argc, char * argv[])
 			if (port == INVALID_HANDLE_VALUE){ return -1; }
 
 			feedback = jrkGetFeedback(port);
-			printf("Current Feedback is %d.\n", feedback); 
+			printf("Current Scaled Feedback is %d.\n", feedback); 
+
+			Input = jrkGetInput(port);
+			printf("Current Input is %d.\n", Input); 
 
 			target = jrkGetTarget(port);
 			printf("Current Target is %d.\n", target);
+
+			Current = jrkGetCurrent(port);
+			printf("Current Current is %d.\n", Current);
 
 			newTarget  = Set_target();
 			//newTarget = (target < 2048) ? 3000 : 1000;
 			printf("Setting Target to %d.\n", newTarget);
 			jrkSetTarget(port, newTarget);
 
+			//printing to the file
+			for(i=0;i<2500;i=i+1)
+			{
+			Current = jrkGetCurrent(port);
+			fprintf(fp,"%d\n", Current);
+			}
+			fclose(fp);
+
+
 			CloseHandle(port);
-
-
-			
+				
 		}
 	else
 	{
@@ -231,15 +299,23 @@ int main(int argc, char * argv[])
 // yet to be calibrated 
 int Set_target()
 { 
-	int degrees =0;
+	
+	double degrees;
 	int target  =0;
-	int motor_max=4095;
+	int motor_max=4095; 
 	int motor_min=0;
+
 	do{
 		printf("Insert a target value from -45 to 45 degrees  \n");
-		scanf("%d",&degrees);
-		target=(degrees+125)*4095/270; // degress+ calibration value to move 0 to 0 ruder position
-		// 4095/180 max feed back is 4095 which should be at 180 degrees location may need calibration
+		scanf("%lf",&degrees);
+		
+		//target=28*degrees+2103; // degress+ calibration value to move 0 to 0 ruder position
+		//using linear aprox
+		target= (0.0395*pow(degrees,2)+28*degrees +2050); // exp 
 	}while(target>3500 || target <500);
 	return(target);
 }
+
+//center = 2050
+//45= 3390
+//-45= 870
